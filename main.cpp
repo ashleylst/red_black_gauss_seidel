@@ -8,21 +8,19 @@
 
 #define USAGE "Usage:\n\trbgs nx ny t c b\n\nWhere:\n \
  nx,ny\tnumber of discretization intervals in x and y axis, repectively\n \
- t\tnumber of threads\n \
  c\tnumber of iterations\n \
  b\tnumber of blocks\n"
 
 int main(int argc, char **argv) {
-    if (argc != 6) {
+    if (argc != 5) {
         fprintf(stderr, USAGE);
         exit(1);
     }
 
     int nx = atoi(argv[1]);
     int ny = atoi(argv[2]);
-    int num_threads = atoi(argv[3]);
-    int num_iterations = atoi(argv[4]);
-    int num_blocks = atoi(argv[5]);
+    int num_iterations = atoi(argv[3]);
+    int num_blocks = atoi(argv[4]);
     double hx = 1 / (double) nx;
     double hy = 1 / (double) ny;
 
@@ -31,18 +29,12 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    if (num_threads < 1) {
-        fprintf(stderr, "error: %d is not a valid number of threads\n", num_threads);
-        exit(1);
-    }
-
     if (num_iterations < 0) {
         fprintf(stderr, "error: %d is not a valid number of iterations\n", num_iterations);
         exit(1);
     }
 
-
-    omp_set_num_threads(num_threads);
+    //omp_set_num_threads(num_threads);
 
     // calculate
 
