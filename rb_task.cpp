@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <omp.h>
+#include <chrono>
 
 enum COLOR
 {
@@ -203,7 +204,7 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     auto *f_black = (double*) malloc(size_x * half_y * sizeof(double));
     split_grid(f, f_red, f_black, nx, ny);
 
-    double begin_time = omp_get_wtime();
+    std::chrono::steady_clock::time_point begin_time = std::chrono::steady_clock::now();
 
 #pragma omp parallel
     {
@@ -218,7 +219,8 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
         }
     }
 
-    double end_time = omp_get_wtime();
+    std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
+
 
     /*
     *for (int it = 0; it < num_iterations; it++)
@@ -267,7 +269,9 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     merge_grids(grid_current, grid_red, grid_black, nx, ny);
     //print_matrix(grid_current, size_x, size_y);
 
-    printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
+    std::cout << "Time = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
+                  << std::endl;
+    //printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
     printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
 
     free(grid_current);
