@@ -1,12 +1,16 @@
 //
 // Created by shiting on 2026-01-22.
 //
-#include "helper.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <nanos6.h>
 #include <chrono>
+#include <iostream>
+
+#define IDX(X, Y) (X) * size_y + (Y)
+#define F(X, Y) sin(M_PI * (X) * hx) * sin(M_PI * (Y) * hy)
+#define N 10
 
 enum COLOR
 {
@@ -14,66 +18,101 @@ enum COLOR
     BLACK
 };
 
-inline int get_start_idx(COLOR color, int idx)
-{
-    if (color == RED)
-        return (idx % 2 == 0) ? 2 : 1;
-    return (idx % 2 == 0) ? 1 : 2;
+double computeMedian(std::vector<long>& nums) {
+    if (nums.empty()) {
+        return 0.0;  // Handle empty vector case
+    }
+
+    // Make a copy to avoid modifying the original vector
+    std::vector<long> sorted = nums;
+    std::sort(sorted.begin(), sorted.end());
+
+    size_t n = sorted.size();
+    if (n % 2 == 0) {  // Even number of elements
+        return (sorted[n/2 - 1] + sorted[n/2]) / 2.0;
+    } else {  // Odd number of elements
+        return sorted[n/2];
+    }
 }
 
-inline void update(double* current, double* top, double* bottom, const double* f,
-                       const int hb, const int ny, const int b,
-                       const double hx, const double hy, const COLOR color)
+inline void init_global(double* grid_current, double* f, int nx, int ny, int size_y, double hx, double hy)
 {
+        // Initialize borders
+#pragma oss taskloop
+        for (int i = 0; i < nx+1; i++) {
+            grid_current[IDX(i, 0)] = 0;
+            grid_current[IDX(i, ny)] = 0;
+        }
+#pragma oss taskloop
+        for (int i = 0; i < ny+1; i++) {
+            grid_current[IDX(0, i)] = 0;
+            grid_current[IDX(nx, i)] = 0;
+        }
+#pragma oss taskloop collapse(2)
+        for (int x = 1; x < nx; x++) {
+            for (int y = 1; y < ny; y++) {
+                int idx = IDX(x, y);
+                grid_current[idx] = 0;
+                f[idx] = F(x, y);
+            }
+        }
+
+}
+
+inline void split_grid(const double* global, double* grid_red, double* grid_black, int nx, int ny) {
     int size_y = ny + 1;
-    int row_ind = b * hb + 1;
-    int first_y = get_start_idx(color, row_ind);
-    for (int j = first_y; j < ny; j += 2)
-    {
-        double sum = 0;
-        if (top != nullptr)
-            sum -= top[(hb-1) * size_y + j] / (hx*hx);
-        sum -= current[size_y + j] / (hx*hx);
-        sum -= current[j - 1] / (hy*hy);
-        sum -= current[j + 1] / (hy*hy);
-
-        current[j] = (f[j] - sum) / (2 / (hx*hx) + 2 / (hy*hy));
-    }
-
-    for (int i = 1; i < hb - 1; i++)
-    {
-        row_ind = b * hb + 1 + i;
-        first_y = get_start_idx(color, row_ind);
-        for (int j = first_y; j < ny; j += 2)
-        {
-            double sum = 0;
-            sum -= current[IDX(i - 1, j)] / (hx*hx);
-            sum -= current[IDX(i + 1, j)] / (hx*hx);
-            sum -= current[IDX(i, j - 1)] / (hy*hy);
-            sum -= current[IDX(i, j + 1)] / (hy*hy);
-
-            current[IDX(i, j)] = (f[IDX(i, j)] - sum) /
-                                (2 / (hx*hx) + 2 / (hy*hy) );
+#pragma oss taskloop collapse(2)
+    for (int i = 0; i <= nx; i++) {
+        for (int j = 0; j <= ny; j++) {
+            if ((i + j) % 2 == 0) {
+                grid_red[(i * size_y + j) / 2]   = global[i * size_y + j];
+            } else {
+                grid_black[(i * size_y + j) / 2] = global[i * size_y + j];
+            }
         }
-    }
-
-    row_ind = b * hb + hb;
-    first_y = get_start_idx(color, row_ind);
-    for (int j = first_y; j < ny; j += 2)
-    {
-        double sum = 0;
-        sum -= current[(hb - 2) * size_y + j]/ (hx*hx);
-        if (bottom!= nullptr)
-        {
-            sum -= bottom[j] / (hx*hx);
-        }
-        sum -= current[IDX(hb - 1, j - 1)] / (hy*hy);
-        sum -= current[IDX(hb - 1, j + 1)] / (hy*hy);
-
-        current[IDX(hb - 1, j)] = (f[IDX(hb - 1, j)] - sum) /
-                                (2 / (hx*hx) + 2 / (hy*hy) );
     }
 }
+
+inline void merge_grids(double* global, const double* grid_red, const double* grid_black, int nx, int ny) {
+    int size_y = ny + 1;
+#pragma oss taskloop collapse(2)
+    for (int i = 0; i <= nx; i++) {
+        for (int j = 0; j <= ny; j++) {
+            if ((i + j) % 2 == 0) {
+                global[i * size_y + j] = grid_red[(i * size_y + j) / 2];
+            } else {
+                global[i * size_y + j] = grid_black[(i * size_y + j) / 2];
+            }
+        }
+    }
+}
+
+inline double calculate_residual(const double* arr, int nx, int ny, double hx, double hy) {
+    double global_res = 0.0;
+    int x, y;
+#pragma oss taskloop collapse(2) reduction(+: global_sum)
+    for (x = 1; x < nx; x++) {
+        for (y = 1; y < ny; y++) {
+            double local_sum = 0.0;
+
+            // Discrete Laplacian operator: (u_i-1 + u_i+1)/hx^2 + (u_j-1 + u_j+1)/hy^2
+            local_sum -= (arr[(x - 1) * (ny + 1) + y] +
+                          arr[(x + 1) * (ny + 1) + y]) / (hx * hx);
+            local_sum -= (arr[x * (ny + 1) + (y - 1)] +
+                          arr[x * (ny + 1) + (y + 1)]) / (hy * hy);
+
+            // Center point: 2u/hx^2 + 2u/hy^2
+            local_sum += arr[x * (ny + 1) + y] * (2.0 / (hx * hx) + 2.0 / (hy * hy));
+
+            // Difference from source function
+            double r = F(x, y) - local_sum;
+            global_res += r * r;
+        }
+    }
+
+    return sqrt(global_res);
+}
+
 
 inline int get_idx(int loc_i, int glb_j, int size_y, bool parity)
 {
@@ -193,9 +232,6 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     auto *grid_current = (double*) malloc(size_x * size_y * sizeof(double));
     auto *f = (double*) malloc(size_x * size_y * sizeof(double));
 
-    init_global(grid_current, f, nx, ny, size_y, hx, hy);
-    double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
-
     nanos6_bitmask_t bitmask;
     nanos6_bitmask_set_wildcard(&bitmask, NUMA_ALL);
     size_t numa_nodes = nanos6_count_setbits(&bitmask);
@@ -204,77 +240,42 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
 
     auto *grid_red = (double *)nanos6_numa_alloc_block_interleave(size, &bitmask, block_size);
     auto *grid_black = (double *)nanos6_numa_alloc_block_interleave(size, &bitmask, block_size);
-    split_grid(grid_current, grid_red, grid_black, nx, ny);
 
     auto *f_red = (double *)nanos6_numa_alloc_block_interleave(size, &bitmask, block_size);
     auto *f_black = (double *)nanos6_numa_alloc_block_interleave(size, &bitmask, block_size);
-    split_grid(f, f_red, f_black, nx, ny);
 
-    std::chrono::steady_clock::time_point begin_time = std::chrono::steady_clock::now();
+    std::vector<long> total(N, 0.0);
 
-        
-            for (int it = 0; it < num_iterations; it++)
-            {
-                update_color(grid_red, grid_black, f_red, hb, half_y, num_blocks, hx, hy, RED);
+    for (int i = 0; i < N; i++)
+    {
+        init_global(grid_current, f, nx, ny, size_y, hx, hy);
+        //double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
 
-                update_color(grid_black, grid_red, f_black, hb, half_y, num_blocks, hx, hy, BLACK);
-            }
+        split_grid(grid_current, grid_red, grid_black, nx, ny);
+        split_grid(f, f_red, f_black, nx, ny);
+
+        std::chrono::steady_clock::time_point begin_time = std::chrono::steady_clock::now();
+
+        for (int it = 0; it < num_iterations; it++)
+        {
+            update_color(grid_red, grid_black, f_red, hb, half_y, num_blocks, hx, hy, RED);
+
+            update_color(grid_black, grid_red, f_black, hb, half_y, num_blocks, hx, hy, BLACK);
+        }
 #pragma oss taskwait
-        
-    
 
-    std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
 
-    /*
-    *for (int it = 0; it < num_iterations; it++)
-    {
-        update(&grid_current[size_y], nullptr,
-                &grid_current[size_y + size_y * hb], &f[size_y],
-                       hb, ny, 0, hx, hy, RED);
-        for (int b = 1; b < num_blocks - 1; b++)
-        {
-            update(&grid_current[size_y + b * size_y * hb], &grid_current[size_y + (b - 1) * size_y * hb],
-                &grid_current[size_y + (b + 1) * size_y * hb], &f[size_y + b * size_y * hb],
-                       hb, ny, b, hx, hy, RED);
-        }
-        update(&grid_current[size_y + (num_blocks - 1) * size_y * hb],
-                   &grid_current[size_y + (num_blocks - 2) * size_y * hb],
-                nullptr, &f[size_y + (num_blocks - 1) * size_y * hb],
-                       hb, ny, num_blocks - 1, hx, hy, RED);
+        //merge_grids(grid_current, grid_red, grid_black, nx, ny);
+        //print_matrix(grid_current, size_x, size_y);
 
-        update(&grid_current[size_y], nullptr,
-                &grid_current[size_y + size_y * hb], &f[size_y],
-                       hb, ny, 0, hx, hy, BLACK);
-        for (int b = 1; b < num_blocks - 1; b++)
-        {
-            update(&grid_current[size_y + b * size_y * hb], &grid_current[size_y + (b - 1) * size_y * hb],
-                &grid_current[size_y + (b + 1) * size_y * hb], &f[size_y + b * size_y * hb],
-                       hb, ny, b, hx, hy, BLACK);
-        }
-        update(&grid_current[size_y + (num_blocks - 1) * size_y * hb],
-                   &grid_current[size_y + (num_blocks - 2) * size_y * hb],
-                nullptr, &f[size_y + (num_blocks - 1) * size_y * hb],
-                       hb, ny, num_blocks - 1, hx, hy, BLACK);
-
-
+        std::cout << "Time (OSS Task) = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
+                      << std::endl;
+        total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
+        //printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
     }
-    for (int i = 0; i < size_x * size_y/2; i++)
-    {
-        std::cout << grid_red[i] << " ";
-    }
-    std::cout << std::endl;
-    for (int i = 0; i < size_x * size_y/2; i++)
-    {
-        std::cout << grid_black[i] << " ";
-    }
-    std::cout << std::endl;
-    merge_grids(grid_current, grid_red, grid_black, nx, ny);*/
-    merge_grids(grid_current, grid_red, grid_black, nx, ny);
-    //print_matrix(grid_current, size_x, size_y);
 
-    std::cout << "Time = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
-                  << std::endl;
-    printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+    std::cout << "median of total time " << computeMedian(total) << std::endl;
 
     free(grid_current);
     free(f);
