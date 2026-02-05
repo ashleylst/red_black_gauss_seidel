@@ -1,10 +1,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
-#include <omp.h>
-#include "helper.h"
-#include "rb_ompfor.h"
-#include "rb_task.h"
+//#include <omp.h>
+//#include "helper.h"
+
+#ifndef USE_FOR
+    #define USE_FOR 1
+#endif
+
+#if USE_FOR == 1
+    #include "rb_ompfor.h"
+#else
+    #include "rb_task.h"
+#endif
 
 #define USAGE "Usage:\n\trbgs nx ny t c b\n\nWhere:\n \
  nx,ny\tnumber of discretization intervals in x and y axis, repectively\n \
@@ -37,10 +45,10 @@ int main(int argc, char **argv) {
     //omp_set_num_threads(num_threads);
 
     // calculate
-
+#if USE_FOR == 1
     gauss_v1(nx, ny, hx, hy, num_iterations);
-
+#else
     rbgs_task(nx, ny, hx, hy, num_iterations, num_blocks);
-
+#endif
     exit(0);
 }

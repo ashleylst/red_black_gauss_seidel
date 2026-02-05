@@ -7,10 +7,17 @@
 #include <nanos6.h>
 #include <chrono>
 #include <iostream>
+#include <vector>
+#include <algorithm>
 
 #define IDX(X, Y) (X) * size_y + (Y)
 #define F(X, Y) sin(M_PI * (X) * hx) * sin(M_PI * (Y) * hy)
-#define N 10
+#define N 1
+
+#define USAGE "Usage:\n\trbgs nx ny t c b\n\nWhere:\n \
+ nx,ny\tnumber of discretization intervals in x and y axis, repectively\n \
+ c\tnumber of iterations\n \
+ b\tnumber of blocks\n"
 
 enum COLOR
 {
@@ -56,6 +63,7 @@ inline void init_global(double* grid_current, double* f, int nx, int ny, int siz
                 f[idx] = F(x, y);
             }
         }
+#pragma oss taskwait
 
 }
 
@@ -71,6 +79,7 @@ inline void split_grid(const double* global, double* grid_red, double* grid_blac
             }
         }
     }
+#pragma oss taskwait
 }
 
 inline void merge_grids(double* global, const double* grid_red, const double* grid_black, int nx, int ny) {
@@ -85,12 +94,13 @@ inline void merge_grids(double* global, const double* grid_red, const double* gr
             }
         }
     }
+#pragma oss taskwait
 }
 
 inline double calculate_residual(const double* arr, int nx, int ny, double hx, double hy) {
     double global_res = 0.0;
     int x, y;
-#pragma oss taskloop collapse(2) reduction(+: global_sum)
+//#pragma oss taskloop collapse(2) reduction(+: global_res)
     for (x = 1; x < nx; x++) {
         for (y = 1; y < ny; y++) {
             double local_sum = 0.0;
@@ -249,7 +259,7 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     for (int i = 0; i < N; i++)
     {
         init_global(grid_current, f, nx, ny, size_y, hx, hy);
-        //double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
+        double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
 
         split_grid(grid_current, grid_red, grid_black, nx, ny);
         split_grid(f, f_red, f_black, nx, ny);
@@ -266,13 +276,13 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
 
         std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
 
-        //merge_grids(grid_current, grid_red, grid_black, nx, ny);
+        merge_grids(grid_current, grid_red, grid_black, nx, ny);
         //print_matrix(grid_current, size_x, size_y);
 
         std::cout << "Time (OSS Task) = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
                       << std::endl;
         total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
-        //printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+        printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
     }
 
     std::cout << "median of total time " << computeMedian(total) << std::endl;
@@ -283,4 +293,38 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     nanos6_numa_free(grid_black);
     nanos6_numa_free(f_red);
     nanos6_numa_free(f_black);
+}
+
+int main(int argc, char **argv) {
+    if (argc != 5) {
+        fprintf(stderr, USAGE);
+        exit(1);
+    }
+
+    int nx = atoi(argv[1]);
+    int ny = atoi(argv[2]);
+    int num_iterations = atoi(argv[3]);
+    int num_blocks = atoi(argv[4]);
+    double hx = 1 / (double) nx;
+    double hy = 1 / (double) ny;
+
+    if ((nx < 1) || (ny < 1)) {
+        fprintf(stderr, "error: %dx%d are not valid dimensions for discretization\n", nx, ny);
+        exit(1);
+    }
+
+    if (num_iterations < 0) {
+        fprintf(stderr, "error: %d is not a valid number of iterations\n", num_iterations);
+        exit(1);
+    }
+
+    //omp_set_num_threads(num_threads);
+
+    // calculate
+
+ //   gauss_v1(nx, ny, hx, hy, num_iterations);
+
+    rbgs_task(nx, ny, hx, hy, num_iterations, num_blocks);
+
+    return 0;
 }

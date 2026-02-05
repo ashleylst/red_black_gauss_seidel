@@ -7,6 +7,8 @@
 #include <omp.h>
 #include <chrono>
 #include <iostream>
+#include <vector>
+#include <algorithm>
 
 #define IDX(X, Y) (X) * size_y + (Y)
 #define F(X, Y) sin(M_PI * (X) * hx) * sin(M_PI * (Y) * hy)
@@ -300,7 +302,7 @@ void gauss_v1(const int nx, const int ny, const double hx, const double hy, cons
     for (int i = 0 ; i < N; i++)
     {
         init_global(grid_current, f, nx, ny, size_y, hx, hy);
-        //ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
+        ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
 
         //print_matrix(f, size_x, size_y);
 
@@ -367,7 +369,7 @@ void gauss_v1(const int nx, const int ny, const double hx, const double hy, cons
                       << std::endl;
         total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
         //printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
-        //printf("Relative Residual: %lf\n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+        printf("Relative Residual: %lf\n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
     }
     std::cout << "median of total time " << computeMedian(total) << std::endl;
 

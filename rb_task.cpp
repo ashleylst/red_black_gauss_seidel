@@ -6,6 +6,8 @@
 #include <cmath>
 #include <chrono>
 #include <iostream>
+#include <vector>
+#include <algorithm>
 
 #define IDX(X, Y) (X) * size_y + (Y)
 #define F(X, Y) sin(M_PI * (X) * hx) * sin(M_PI * (Y) * hy)
@@ -248,7 +250,7 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
     for (int i = 0; i < N; i++)
     {
         init_global(grid_current, f, nx, ny, size_y, hx, hy);
-        //double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
+        double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
 
         split_grid(grid_current, grid_red, grid_black, nx, ny);
         split_grid(f, f_red, f_black, nx, ny);
@@ -271,14 +273,14 @@ void rbgs_task(const int nx, const int ny, const double hx, const double hy,
         std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
 
 
-        //merge_grids(grid_current, grid_red, grid_black, nx, ny);
+        merge_grids(grid_current, grid_red, grid_black, nx, ny);
         //print_matrix(grid_current, size_x, size_y);
 
         std::cout << "Time (OMP task) = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
                       << std::endl;
         total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
         //printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
-        //printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+        printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
     }
 
     std::cout << "median of total time " << computeMedian(total) << std::endl;
