@@ -200,83 +200,186 @@ void gauss_v2(const int nx, const int ny, const double hx, const double hy, cons
     auto *f_red = (double*)malloc(size_x * size_y * sizeof(double));
     auto *f_black = (double*)malloc(size_x * size_y * sizeof(double));
 
-    // initialize the grids
-    init(grid_red, grid_black, size_y, f_red, f_black, nx, ny, hx, hy);
-    combine_red_black(grid_current, grid_red, grid_black, size_y, nx, ny);
-    double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
+    std::vector<long> total(N, 0.0);
 
-    double begin_time = omp_get_wtime();
-
-    #pragma omp parallel private(idx, sum)
+    for (int i = 0; i < N; i++)
     {
-        // start iterative solve
-        for (int it = 0; it < num_iterations; it++) {
-            // do red (even)
-            #pragma omp for
-            for (int i = 1; i < nx; i++) {
-                int first_y = (i % 2 == 0) ? 2 : 1;
-                for (int j = first_y; j < ny; j += 2) {
-                    idx = IDX2(i, j);
+        // initialize the grids
+        init(grid_red, grid_black, size_y, f_red, f_black, nx, ny, hx, hy);
+        combine_red_black(grid_current, grid_red, grid_black, size_y, nx, ny);
+        double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
 
-                    sum = 0;
+        std::chrono::steady_clock::time_point begin_time = std::chrono::steady_clock::now();
 
-                    if (i % 2 == 0) {
-                        // top neighbor
-                        sum -= grid_black[idx-size_y] / (hx*hx);
+#pragma omp parallel private(idx, sum)
+        {
+            // start iterative solve
+            for (int it = 0; it < num_iterations; it++) {
+                // do red (even)
+#pragma omp for
+                for (int i = 1; i < nx; i++) {
+                    int first_y = (i % 2 == 0) ? 2 : 1;
+                    for (int j = first_y; j < ny; j += 2) {
+                        idx = IDX2(i, j);
+
+                        sum = 0;
+
+                        if (i % 2 == 0) {
+                            // top neighbor
+                            sum -= grid_black[idx-size_y] / (hx*hx);
+                        }
+                        else {
+                            // bottom neighbor
+                            sum -= grid_black[idx+size_y] / (hx*hx);
+                        }
+
+                        sum -= grid_black[idx] / (hx*hx);
+                        sum -= grid_black[idx-1] / (hy*hy);
+                        sum -= grid_black[idx+1] / (hy*hy);
+
+                        grid_red[idx] = (f_red[idx] - sum) /
+                            (2 / (hx*hx) + 2 / (hy*hy) );
                     }
-                    else {
-                        // bottom neighbor
-                        sum -= grid_black[idx+size_y] / (hx*hx);
-                    }
-
-                    sum -= grid_black[idx] / (hx*hx);
-                    sum -= grid_black[idx-1] / (hy*hy);
-                    sum -= grid_black[idx+1] / (hy*hy);
-
-                    grid_red[idx] = (f_red[idx] - sum) /
-                        (2 / (hx*hx) + 2 / (hy*hy) );
                 }
-            }
 
-            #pragma omp for
-            for (int i = 1; i < nx; i++) {
-                int first_y = (i % 2 == 0) ? 1 : 2;
-                for (int j = first_y; j < ny; j += 2) {
-                    idx = IDX2(i, j);
+#pragma omp for
+                for (int i = 1; i < nx; i++) {
+                    int first_y = (i % 2 == 0) ? 1 : 2;
+                    for (int j = first_y; j < ny; j += 2) {
+                        idx = IDX2(i, j);
 
-                    sum = 0;
+                        sum = 0;
 
-                    if (i % 2 == 0) {
-                        // top neighbor
-                        sum -= grid_red[idx-size_y] / (hx*hx);
+                        if (i % 2 == 0) {
+                            // top neighbor
+                            sum -= grid_red[idx-size_y] / (hx*hx);
+                        }
+                        else {
+                            // bottom neighbor
+                            sum -= grid_red[idx+size_y] / (hx*hx);
+                        }
+
+                        sum -= grid_red[idx] / (hx*hx);
+                        sum -= grid_red[idx-1] / (hy*hy);
+                        sum -= grid_red[idx+1] / (hy*hy);
+
+                        grid_black[idx] = (f_black[idx] - sum) /
+                            (2 / (hx*hx) + 2 / (hy*hy) );
                     }
-                    else {
-                        // bottom neighbor
-                        sum -= grid_red[idx+size_y] / (hx*hx);
-                    }
-
-                    sum -= grid_red[idx] / (hx*hx);
-                    sum -= grid_red[idx-1] / (hy*hy);
-                    sum -= grid_red[idx+1] / (hy*hy);
-
-                    grid_black[idx] = (f_black[idx] - sum) /
-                        (2 / (hx*hx) + 2 / (hy*hy) );
                 }
-            }
 
+            }
         }
+
+        std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
+
+        // Copy solution from grid_red/grid_black into grid_current
+        combine_red_black(grid_current, grid_red, grid_black, size_y, nx, ny);
+
+        // Calculate residue and output solution
+        std::cout << "Time (Parallel for v2) = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
+              << std::endl;
+        total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
+        //printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
+        printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
     }
 
-    double end_time = omp_get_wtime();
-
-    // Copy solution from grid_red/grid_black into grid_current
-    combine_red_black(grid_current, grid_red, grid_black, size_y, nx, ny);
-
-    // Calculate residue and output solution
-    printf("Total Elapsed Time: %lf s\n", end_time-begin_time);
-    printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+    std::cout << "median of total time " << computeMedian(total) << std::endl;
 
     free(grid_current);
+    free(grid_red);
+    free(grid_black);
+    free(f_red);
+    free(f_black);
+}
+
+void gauss_v3(const int nx, const int ny, const double hx, const double hy, const int num_iterations)
+{
+    int size_x = nx + 1;
+    int size_y = ny + 1;
+    int half_y = size_y / 2;
+
+    auto *grid_current = (double*) malloc(size_x * size_y * sizeof(double));
+    auto *f = (double*) malloc(size_x * size_y * sizeof(double));
+
+    auto *grid_red = (double*) malloc(size_x * half_y * sizeof(double));
+    auto *grid_black = (double*) malloc(size_x * half_y * sizeof(double));
+
+    auto *f_red = (double*) malloc(size_x * half_y * sizeof(double));
+    auto *f_black = (double*) malloc(size_x * half_y * sizeof(double));
+
+    std::vector<long> total(N, 0.0);
+
+    for (int i = 0; i < N; i++)
+    {
+        init_global(grid_current, f, nx, ny, size_y, hx, hy);
+        double ini_res = calculate_residual(grid_current, nx, ny, hx, hy);
+
+        split_grid(grid_current, grid_red, grid_black, nx, ny);
+        split_grid(f, f_red, f_black, nx, ny);
+        double inv_hx2 = 1.0 / (hx * hx);
+        double inv_hy2 = 1.0 / (hy * hy);
+        double center_coeff = 1.0 / (2.0 * inv_hx2 + 2.0 * inv_hy2);
+        double sum;
+        int it, x, y;
+
+        std::chrono::steady_clock::time_point begin_time = std::chrono::steady_clock::now();
+
+#pragma omp parallel private(it, x, y, sum)
+        {
+            for (it = 0; it < num_iterations; ++it) {
+
+                // --- STEP 1: UPDATE RED NODES ---
+                // Neighbors (x+/-1, y) and (x, y+/-1) are all in grid_black
+#pragma omp for
+                for (x = 1; x < nx; ++x) {
+                    for (y = 1; y < ny; ++y) {
+                        if ((x + y) % 2 == 0) { // Red node
+                            int red_idx = (x * size_y + y) / 2;
+
+                            sum = 0;
+                            sum -= grid_black[((x - 1) * size_y + y) / 2] * inv_hx2;
+                            sum -= grid_black[((x + 1) * size_y + y) / 2] * inv_hx2;
+                            sum -= grid_black[(x * size_y + (y - 1)) / 2] * inv_hy2;
+                            sum -= grid_black[(x * size_y + (y + 1)) / 2] * inv_hy2;
+
+                            grid_red[red_idx] = (f_red[red_idx] - sum) * center_coeff;
+                        }
+                    }
+                }
+
+                // --- STEP 2: UPDATE BLACK NODES ---
+                // Neighbors are all in the newly updated grid_red
+#pragma omp for
+                for (x = 1; x < nx; ++x) {
+                    for (y = 1; y < ny; ++y) {
+                        if ((x + y) % 2 != 0) { // Black node
+                            int black_idx = (x * size_y + y) / 2;
+
+                            sum = 0;
+                            sum -= grid_red[((x - 1) * size_y + y) / 2] * inv_hx2;
+                            sum -= grid_red[((x + 1) * size_y + y) / 2] * inv_hx2;
+                            sum -= grid_red[(x * size_y + (y - 1)) / 2] * inv_hy2;
+                            sum -= grid_red[(x * size_y + (y + 1)) / 2] * inv_hy2;
+
+                            grid_black[black_idx] = (f_black[black_idx] - sum) * center_coeff;
+                        }
+                    }
+                }
+            }
+        }
+        std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
+
+        std::cout << "Time (Parallel for v3) = " << std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count()
+                              << std::endl;
+        total[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - begin_time).count();
+        merge_grids(grid_current, grid_red, grid_black, nx, ny);
+        printf("Relative Residual: %lf \n", calculate_residual(grid_current, nx, ny, hx, hy)/ini_res);
+    }
+    std::cout << "median of total time " << computeMedian(total) << std::endl;
+
+    free(grid_current);
+    free(f);
     free(grid_red);
     free(grid_black);
     free(f_red);

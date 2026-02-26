@@ -47,6 +47,7 @@ int main(int argc, char **argv) {
     // calculate
 #if USE_FOR == 1
     gauss_v1(nx, ny, hx, hy, num_iterations);
+    gauss_v3(nx, ny, hx, hy, num_iterations);
 #else
     rbgs_task(nx, ny, hx, hy, num_iterations, num_blocks);
 #endif
